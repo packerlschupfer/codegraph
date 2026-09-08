@@ -16,6 +16,7 @@ import {
   GraphStats,
   SearchOptions,
   SearchResult,
+  UnderExtractedFile,
 } from '../types';
 import { safeJsonParse } from '../utils';
 import { kindBonus, nameMatchBonus, scorePathRelevance } from '../search/query-utils';
@@ -2891,6 +2892,74 @@ export class QueryBuilder {
   /**
    * Get all tracked files
    */
+  /**
+   * Files that were PARSED but yielded no declarations — see
+   * {@link UnderExtractedFile}. A grammar that does not fit the language it was
+   * pointed at still parses: it returns a tree, the extractor walks it, and out
+   * come stray variables and imports with not one function. That file is then
+   * indistinguishable from a genuinely declaration-free one, and every coverage
+   * report counts it as indexed.
+   *
+   * Conservative on purpose, because a false positive here trains people to
+   * ignore the whole report:
+   *  - Data languages are excluded (`yaml`, `xml`, `properties`, `twig`) — a
+   *    config file with no functions is correct, not suspicious.
+   *  - Generated files are excluded: they are frequently huge data blobs, and
+   *    they are already down-ranked everywhere else.
+   *  - `minBytes` keeps short files out; a 30-line script declaring nothing is
+   *    ordinary, a 27 KB one is not.
+   *  - `property`/`field`/`variable`/`constant`/`enum_member` deliberately do
+   *    NOT count as declarations: they are exactly what survives a mismatched
+   *    parse, so counting them would mask the case this exists to find.
+   *
+   * The load-bearing condition is the second one: the file must have produced a
+   * body of loose symbols ANYWAY. Measured on this repo, "no declarations" alone
+   * flags 58 files, nearly all of them vitest suites whose nodes are `import:6
+   * file:1` — they declare nothing because every test is an anonymous callback,
+   * which is correct rather than a failure. The mismatched parse looks different
+   * and unmistakable: a 27 KB Vala file indexed as Java came back `variable:68
+   * file:1` — the grammar found plenty and none of it had shape. Requiring loose
+   * symbols takes this repo from 58 flags to a handful while still catching it.
+   * `constant` is excluded from that count so a file of exported constants —
+   * which legitimately declares no behaviour — does not qualify.
+   */
+  getUnderExtractedFiles(
+    options: { minBytes?: number; minLooseSymbols?: number; limit?: number } = {}
+  ): UnderExtractedFile[] {
+    const { minBytes = 2048, minLooseSymbols = 5, limit = 100 } = options;
+    const rows = this.db
+      .prepare(`
+        SELECT f.path AS path, f.language AS language, f.size AS size, f.node_count AS nodeCount
+        FROM files f
+        WHERE f.size >= ?
+          AND f.generated = 0
+          AND f.language NOT IN ('yaml', 'xml', 'properties', 'twig')
+          AND NOT EXISTS (
+            SELECT 1 FROM nodes n
+            WHERE n.file_path = f.path
+              AND n.kind IN (
+                'function', 'method', 'class', 'struct', 'interface', 'trait',
+                'protocol', 'enum', 'type_alias', 'namespace', 'module',
+                'component', 'route', 'union'
+              )
+          )
+          AND (
+            SELECT COUNT(*) FROM nodes n2
+            WHERE n2.file_path = f.path
+              AND n2.kind IN ('variable', 'field', 'property', 'parameter')
+          ) >= ?
+        ORDER BY f.size DESC
+        LIMIT ?
+      `)
+      .all(minBytes, minLooseSymbols, limit) as Array<{ path: string; language: string; size: number; nodeCount: number }>;
+    return rows.map((r) => ({
+      filePath: r.path,
+      language: r.language as Language,
+      sizeBytes: r.size,
+      nodeCount: r.nodeCount ?? 0,
+    }));
+  }
+
   getAllFiles(): FileRecord[] {
     if (!this.stmts.getAllFiles) {
       this.stmts.getAllFiles = this.db.prepare('SELECT * FROM files ORDER BY path');

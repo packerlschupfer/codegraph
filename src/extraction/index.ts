@@ -19,6 +19,7 @@ import {
   Edge,
   UnresolvedReference,
   ReferenceKind,
+  UnderExtractedFile,
 } from '../types';
 import { QueryBuilder } from '../db/queries';
 import { extractFromSource } from './tree-sitter';
@@ -108,6 +109,13 @@ export interface IndexResult {
    * excludes a project's main language.
    */
   unindexedExtensions?: Record<string, number>;
+  /**
+   * Files that parsed but yielded no declarations. Only set by full-index runs.
+   * Reported beside the extension gap because it is the other half of the same
+   * question: what did this index fail to see? One is files never opened, the
+   * other files opened to no effect.
+   */
+  underExtractedFiles?: UnderExtractedFile[];
   errors: ExtractionError[];
   durationMs: number;
 }
@@ -2411,6 +2419,9 @@ export class ExtractionOrchestrator {
       UNINDEXED_EXTENSIONS_KEY,
       JSON.stringify(Object.fromEntries(this.lastSkippedExtensions ?? []))
     );
+    // Derived from what was just stored, so it needs no bookkeeping during the
+    // run and is always consistent with the graph it describes.
+    const underExtractedFiles = this.queries.getUnderExtractedFiles();
 
     return {
       success: filesIndexed > 0 || errors.filter((e) => e.severity === 'error').length === 0,
@@ -2421,6 +2432,7 @@ export class ExtractionOrchestrator {
       nodesCreated: totalNodes,
       edgesCreated: totalEdges,
       unindexedExtensions: Object.fromEntries(this.lastSkippedExtensions ?? []),
+      underExtractedFiles,
       errors,
       durationMs: Date.now() - startTime,
     };

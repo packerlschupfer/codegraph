@@ -24,6 +24,7 @@ import {
   BuildContextOptions,
   FindRelevantContextOptions,
   UnresolvedReference,
+  UnderExtractedFile,
 } from './types';
 import { DatabaseConnection, getDatabasePath, removeDatabaseFiles } from './db';
 import { WalCheckpointValve, resolveWalValveMb } from './db/wal-valve';
@@ -1337,6 +1338,18 @@ export class CodeGraph {
    */
   getMetadata(key: string): string | null {
     return this.queries.getMetadata(key);
+  }
+
+  /**
+   * Files the index parsed and got no declarations out of — substantial source,
+   * zero functions/classes/types. See {@link UnderExtractedFile}: this is the
+   * case an unindexed-extension report cannot see, because the file's extension
+   * IS mapped and it therefore counts as covered.
+   */
+  getUnderExtractedFiles(
+    options: { minBytes?: number; minLooseSymbols?: number; limit?: number } = {}
+  ): UnderExtractedFile[] {
+    return this.queries.getUnderExtractedFiles(options);
   }
 
   /**

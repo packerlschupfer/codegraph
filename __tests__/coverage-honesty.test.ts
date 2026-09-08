@@ -167,3 +167,45 @@ describe('files skipped for lack of a grammar are reported', () => {
     expect(notableUnindexedExtensions(stored)).toEqual([]);
   });
 });
+
+describe('a file that parsed to nothing is not the same as a file with nothing in it', () => {
+  it('flags substantial source that produced loose symbols but no declarations', async () => {
+    // The shape a mismatched grammar leaves behind: the parse succeeds, finds
+    // plenty, and none of it has structure — a 27 KB Vala file read with the
+    // Java grammar came back 68 variables and not one function. Reproduced here
+    // with a top-level script, which yields the same shape deterministically in
+    // a supported language rather than depending on one grammar's failure mode.
+    //
+    // That the two are indistinguishable HERE is the honest position: measured
+    // across three repos no threshold separates them (a top-level Python script
+    // had a higher loose-symbol density than two files whose declarations were
+    // genuinely invisible), which is why the report states the observation and
+    // does not diagnose a cause.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-empty-'));
+    const lines: string[] = [];
+    for (let i = 0; i < 60; i++) lines.push(`setting_${i} = ${i} * 2`);
+    fs.writeFileSync(path.join(tempDir, 'script.py'), lines.join('\n') + '\n');
+
+    cg = await CodeGraph.init(tempDir, { index: true });
+    const flagged = cg.getUnderExtractedFiles({ minBytes: 256 });
+    expect(flagged.map((f) => f.filePath)).toContain('script.py');
+    expect(flagged[0]!.language).toBe('python');
+  });
+
+  it('does not flag a file that declares nothing because there is nothing to declare', async () => {
+    // A vitest-shaped file — every test an anonymous callback — declares nothing
+    // and is correct. Its nodes are imports and the file itself, with no body of
+    // loose symbols, which is what separates it from a mismatched parse. Before
+    // that condition existed this class was 58 of 58 flags on the engine's own
+    // repo.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-empty2-'));
+    const lines = ["import { describe, it, expect } from 'vitest';", ''];
+    for (let i = 0; i < 60; i++) {
+      lines.push(`describe('suite ${i}', () => { it('case ${i}', () => { expect(${i}).toBe(${i}); }); });`);
+    }
+    fs.writeFileSync(path.join(tempDir, 'thing.test.ts'), lines.join('\n'));
+
+    cg = await CodeGraph.init(tempDir, { index: true });
+    expect(cg.getUnderExtractedFiles({ minBytes: 512 })).toEqual([]);
+  });
+});

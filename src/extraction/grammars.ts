@@ -287,6 +287,27 @@ export function formatUnindexedExtensions(
 }
 
 /**
+ * One-line summary of files that parsed to nothing, or null when there are
+ * none. Same shape as {@link formatUnindexedExtensions}: the largest few, an
+ * honest count of the remainder, and a pointer at the detail view.
+ */
+export function formatUnderExtractedFiles(
+  files: ReadonlyArray<{ filePath: string; language: string; sizeBytes: number }>
+): string | null {
+  if (files.length === 0) return null;
+  const shown = files.slice(0, UNINDEXED_REPORT_LIMIT);
+  const rest = files.length - shown.length;
+  const parts = shown.map((f) => `${f.filePath} (${Math.round(f.sizeBytes / 1024)} KB, ${f.language})`);
+  const more = rest > 0 ? ` (and ${rest} more — see \`codegraph status\`)` : '';
+  // States the observation, not a cause. Measured across three repos, this
+  // cannot separate "the grammar could not see it" from "the file genuinely
+  // declares nothing" — a top-level Python script had a HIGHER loose-symbol
+  // density than two files whose declarations really were invisible. Diagnosing
+  // would be wrong some of the time and confident every time.
+  return `Parsed, but no functions or types found: ${parts.join(', ')}${more}. Worth a look if you expected symbols there.`;
+}
+
+/**
  * Whether a file is one CodeGraph can parse, based purely on its extension.
  * This is the single source of truth for "should we index this file" — derived
  * from EXTENSION_MAP so parser support and indexing selection never drift.

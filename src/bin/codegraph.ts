@@ -40,7 +40,7 @@ try {
 
 import { Command } from 'commander';
 import * as path from 'path';
-import { formatUnindexedExtensions, notableUnindexedExtensions } from '../extraction/grammars';
+import { formatUnindexedExtensions, notableUnindexedExtensions, formatUnderExtractedFiles } from '../extraction/grammars';
 import { UNINDEXED_EXTENSIONS_KEY } from '../extraction';
 import { safeJsonParse } from '../utils';
 import * as fs from 'fs';
@@ -374,6 +374,8 @@ type IndexResult = {
   edgesCreated: number;
   /** Extensions the scan passed over for lack of a grammar (full index only). */
   unindexedExtensions?: Record<string, number>;
+  /** Files that parsed but yielded no declarations (full index only). */
+  underExtractedFiles?: Array<{ filePath: string; language: string; sizeBytes: number; nodeCount: number }>;
   errors: Array<{ message: string; filePath?: string; severity: string; code?: string }>;
   durationMs: number;
 };
@@ -414,6 +416,11 @@ function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexR
     if (result.unindexedExtensions) {
       const gap = formatUnindexedExtensions(result.unindexedExtensions);
       if (gap) clack.log.warn(gap);
+    }
+    // The other half: files that WERE read and produced nothing.
+    if (result.underExtractedFiles) {
+      const empty = formatUnderExtractedFiles(result.underExtractedFiles);
+      if (empty) clack.log.warn(empty);
     }
     // A PARTIAL index (files silently dropped mid-pipeline) must not pass
     // as a clean run — it's the difference between "indexed the repo" and
@@ -1149,6 +1156,21 @@ program
           console.log(chalk.dim('  Map these to a supported language in codegraph.json if they are source.'));
           console.log();
         }
+      }
+
+      // Files that DID parse and produced nothing. Invisible to the block
+      // above, because their extension is mapped and they therefore count as
+      // covered — a grammar pointed at a language it doesn't fit still returns
+      // a tree, and out come stray variables with not one function.
+      const underExtracted = cg.getUnderExtractedFiles();
+      if (underExtracted.length > 0) {
+        console.log(chalk.bold('Parsed, No Declarations Found:'));
+        for (const f of underExtracted) {
+          console.log(`  ${f.filePath}  ${chalk.dim(`${Math.round(f.sizeBytes / 1024)} KB, indexed as ${f.language}, ${f.nodeCount} symbols`)}`);
+        }
+        console.log(chalk.dim('  Substantial files whose parse produced no functions or types.'));
+        console.log(chalk.dim('  Often fine (a top-level script, a macro-heavy header); worth checking if you expected symbols.'));
+        console.log();
       }
 
       // Pending changes

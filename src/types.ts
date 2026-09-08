@@ -486,6 +486,32 @@ export interface SearchResult {
 }
 
 /**
+ * A file the index PARSED and got essentially nothing out of: substantial
+ * source, zero declarations.
+ *
+ * The blind spot left by unindexed-extension reporting, which only sees files
+ * skipped outright. A file whose extension IS mapped counts as covered however
+ * little came back — so a 27 KB Vala file parsed with a grammar that does not
+ * fit it (68 variables, not one function) is indistinguishable from a file that
+ * genuinely declares nothing. Same failure as every other one in this area: the
+ * losing case had no way to be represented, so it was reported as success.
+ *
+ * Deliberately language-agnostic. It would have flagged the Vala gap on day one
+ * without anyone knowing what Vala is, and it flags the next such case without
+ * a new rule.
+ */
+export interface UnderExtractedFile {
+  /** Project-relative path. */
+  filePath: string;
+  /** Language the file was indexed as — often the thing that is wrong. */
+  language: Language;
+  /** File size in bytes; the reason this is suspicious rather than ordinary. */
+  sizeBytes: number;
+  /** Nodes of ANY kind stored for it — typically imports and stray variables. */
+  nodeCount: number;
+}
+
+/**
  * A symbol whose name-segments match prose words from a prompt — the
  * graph-derived signal behind the front-load hook's medium tier
  * (CodeGraph.getSegmentMatches). Always verified to exist in `nodes` at the

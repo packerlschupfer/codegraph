@@ -130,6 +130,81 @@ describe('a receiver-less JS/TS call never binds to a method (#1714)', () => {
     expect(names).toContain('test');
   });
 
+  it('a destructured or selector-bound store action keeps its cross-file candidate', async () => {
+    // Both zustand access idioms bind a bare name in the CALLING file, but
+    // neither shadows the action: the function still lives in the store's file
+    // (#1573). Treating them as local bindings silently drops the store flow —
+    // the coverage the object-literal work exists to provide.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-1714-'));
+    fs.writeFileSync(path.join(tempDir, 'package.json'), '{"name":"t","dependencies":{"zustand":"^4"}}\n');
+    fs.writeFileSync(
+      path.join(tempDir, 'store.ts'),
+      [
+        "import { create } from 'zustand'",
+        'export const useStore = create((set) => ({',
+        '  fetchUser: async () => { set({}) },',
+        '  setZipUri: (uri: string) => set({ uri }),',
+        '}))',
+        '',
+      ].join('\n')
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'caller.ts'),
+      [
+        "import { useStore } from './store'",
+        'export async function viaDestructure() {',
+        '  const { fetchUser } = useStore.getState()',
+        '  await fetchUser()',
+        '}',
+        'export function viaSelector() {',
+        '  const setZipUri = useStore((s) => s.setZipUri)',
+        '  setZipUri("x")',
+        '}',
+        '',
+      ].join('\n')
+    );
+    cg = await CodeGraph.init(tempDir, { index: true });
+    cg.resolveReferences();
+    const action = (name: string) =>
+      cg!.getNodesByKind('function').find((n) => n.name === name && n.filePath.endsWith('store.ts'))!;
+    expect(cg.getCallers(action('fetchUser').id).map((c) => c.node.name)).toContain('viaDestructure');
+    expect(cg.getCallers(action('setZipUri').id).map((c) => c.node.name)).toContain('viaSelector');
+  });
+
+  it('a store action is still reached through getState() when its interface declares it', async () => {
+    // `interface S { reset(): void }` puts a bodiless `method` node beside the
+    // action since #1638. It is the type restated, not a second callable, so it
+    // must not make the store-accessor chain ambiguous and drop the edge.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-1714-'));
+    fs.writeFileSync(path.join(tempDir, 'package.json'), '{"name":"t","dependencies":{"zustand":"^4"}}\n');
+    fs.writeFileSync(
+      path.join(tempDir, 'store.ts'),
+      [
+        "import { create } from 'zustand'",
+        'interface S { reset(): void }',
+        'export const useStore = create<S>((set) => ({',
+        '  reset: () => set({}),',
+        '}))',
+        '',
+      ].join('\n')
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'caller.ts'),
+      [
+        "import { useStore } from './store'",
+        'export function hardReset() {',
+        '  useStore.getState().reset()',
+        '}',
+        '',
+      ].join('\n')
+    );
+    cg = await CodeGraph.init(tempDir, { index: true });
+    cg.resolveReferences();
+    const reset = cg.getNodesByKind('function').find((n) => n.name === 'reset' && n.filePath.endsWith('store.ts'))!;
+    expect(reset).toBeDefined();
+    expect(cg.getCallers(reset.id).map((c) => c.node.name)).toContain('hardReset');
+  });
+
   it('keeps `other.serialize()` — a call through a receiver', async () => {
     const callees = await callsFromMethod(
       [

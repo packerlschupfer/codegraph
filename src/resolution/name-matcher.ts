@@ -707,15 +707,34 @@ function isLocallyBoundJsName(name: string, filePath: string, context: Resolutio
   if (hit !== undefined) return hit;
   const source = context.readFile(filePath) ?? '';
   const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // `const { name } = require('./m')` / `= await import('./m')` binds an IMPORT,
-  // not a shadow: the symbol lives in the other file and the call means it.
+  // A DESTRUCTURING never shadows — it names a PROPERTY of whatever it unpacks,
+  // and the function behind that property lives wherever it was defined:
+  // `const { lookupPublicIPv4 } = require('./public-ip')`, and equally
+  // `const { fetchUser } = useStore.getState()`, whose store actions are indexed
+  // as functions in the store's own file (#1573). Only a plain binding shadows
+  // (`const transform = makeTransform()`, `const now = options.now || …`), so
+  // only a plain binding may strip the cross-file candidate. Group 1 marks the
+  // destructured form, group 2 the initialiser.
   const declRe = new RegExp(
-    '\\b(?:const|let|var)\\s+(?:' + n + '\\b|[{\\[][^;=]*?\\b' + n + '\\b[^;=]*?[}\\]])\\s*(?:=\\s*([^;\\n]*))?',
+    '\\b(?:const|let|var)\\s+(?:' + n + '\\b|([{\\[])[^;=]*?\\b' + n + '\\b[^;=]*?[}\\]])\\s*(?:=\\s*([^;\\n]*))?',
     'g'
   );
+  const selectorRe = new RegExp('\\(\\s*\\(?\\s*[\\w$]+\\s*\\)?\\s*=>\\s*[\\w$]+\\.' + n + '\\b');
   let bound = false;
   for (const m of source.matchAll(declRe)) {
-    if (!/^\s*(?:await\s+)?(?:require|import)\s*\(/.test(m[1] ?? '')) { bound = true; break; }
+    if (m[1]) continue;
+    // `const m = require('./m')` / `= await import('./m')` binds an IMPORT, not
+    // a shadow: the symbol lives in the other file and the call means it.
+    if (/^\s*(?:await\s+)?(?:require|import)\s*\(/.test(m[2] ?? '')) continue;
+    // A SELECTOR hands back the very member it selects — zustand's
+    // `const setZipUri = useCaptureStorage((s) => s.setZipUri)`, the hook-side
+    // twin of the `getState()` chain matchStoreAccessorChain already keeps. The
+    // arrow must take a parameter and read THIS name off it, which is what
+    // separates it from a plain local computed out of a value that merely
+    // mentions the name (`const now = options.now || (() => Date.now())`).
+    if (selectorRe.test(m[2] ?? '')) continue;
+    bound = true;
+    break;
   }
   if (!bound) {
     bound =
@@ -2611,6 +2630,28 @@ function matchRustSelfFieldCall(
 }
 
 /**
+ * Whether `n` is a member declared by an INTERFACE or a type alias's object
+ * literal — a `method_signature` / `property_signature`, which has entered the
+ * graph as a `method` / `property` node since #1638. It has no body, so it can
+ * never be the thing a call EXECUTES; it is the owning type restated. The same
+ * judgement the query layer already makes for these nodes (`IS_INTERFACE_MEMBER`
+ * in db/queries.ts), applied where resolution counts candidates.
+ *
+ * Ownership is read off the qualified name (`S::reset` → `S`) and
+ * confirmed against a type of that name in the SAME file, so a class method
+ * that merely shares a name with some interface elsewhere is untouched.
+ */
+function isBodilessSignatureMember(n: Node, context: ResolutionContext): boolean {
+  const sep = n.qualifiedName.lastIndexOf('::');
+  if (sep <= 0) return false;
+  const owner = n.qualifiedName.slice(0, sep).split('::').pop();
+  if (!owner) return false;
+  return context
+    .getNodesByName(owner)
+    .some((o) => (o.kind === 'interface' || o.kind === 'type_alias') && o.filePath === n.filePath);
+}
+
+/**
  * The one fallback a TS/JS/Python call-receiver chain keeps (#1683): a STORE
  * ACCESSOR. Zustand's `get()` inside the store factory and
  * `useStore.getState()` outside it hand back the store whose actions are
@@ -2629,7 +2670,10 @@ function matchStoreAccessorChain(ref: UnresolvedRef, context: ResolutionContext)
   if (!(inner === 'get' || inner === 'getState' || inner.endsWith('.getState'))) return null;
   const callables = context
     .getNodesByName(method)
-    .filter((n) => (n.kind === 'function' || n.kind === 'method') && sameLanguageFamily(n.language, ref.language) && n.id !== ref.fromNodeId);
+    .filter((n) => (n.kind === 'function' || n.kind === 'method') && sameLanguageFamily(n.language, ref.language) && n.id !== ref.fromNodeId)
+    // A signature the store's own TYPE declares is the action restated, not a
+    // second action — see isBodilessSignatureMember.
+    .filter((n) => !isBodilessSignatureMember(n, context));
   if (callables.length !== 1) return null;
   return { original: ref, targetNodeId: callables[0]!.id, confidence: 0.6, resolvedBy: 'exact-match' };
 }

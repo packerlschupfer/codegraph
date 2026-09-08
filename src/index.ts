@@ -1330,6 +1330,16 @@ export class CodeGraph {
   // ===========================================================================
 
   /**
+   * Read one `project_metadata` value recorded at index time, or null when the
+   * key was never written (e.g. an index built before the key existed).
+   * Advisory data ABOUT the index rather than part of the graph — the
+   * unindexed-extension tally `codegraph status` reports is read through here.
+   */
+  getMetadata(key: string): string | null {
+    return this.queries.getMetadata(key);
+  }
+
+  /**
    * Get statistics about the knowledge graph
    */
   getStats(): GraphStats {

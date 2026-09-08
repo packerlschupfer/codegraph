@@ -1378,8 +1378,15 @@ export class QueryBuilder {
         // Evaluated once and reused: the predicate stats the config file.
         const deprioritized = this.isDeprioritizedPath?.(r.node.filePath) ?? false;
         const nameBonus = nameMatchBonus(r.node.name, scoringQuery);
+        // Did the query touch this symbol's IDENTITY at all, or only its prose?
+        // FTS also indexes `docstring`, so a comment that merely MENTIONS a
+        // name matches a query for that name. Reuses the bonus already computed
+        // here — the qualified-name probe only runs when the simple name missed.
+        const matchedName =
+          nameBonus > 0 || nameMatchBonus(r.node.qualifiedName, scoringQuery) > 0;
         return {
           ...r,
+          matchedName,
           score: r.score
             + kindBonus(r.node.kind)
             + scorePathRelevance(r.node.filePath, scoringQuery, this.projectNameTokens, deprioritized)

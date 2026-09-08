@@ -25,6 +25,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New Features
 
+- **CodeGraph now tells you what it could not read.** Indexing a project reports the files it passed over for lack of a grammar — `Not indexed (no grammar): 6 .vala` — and `codegraph status` keeps showing it, so a codebase whose main language isn't supported no longer looks fully indexed. Documentation, images and config formats are left out of the report; genuine source is not. Map anything listed to a supported language with `extensions` in `codegraph.json`.
+
 - **Codex and Astra read project guidance from `AGENTS.md`.** The canonical agent guide now lives in `AGENTS.md` (with a nested `docs/AGENTS.md` for long validation notes); `CLAUDE.md` is a thin `@AGENTS.md` wrapper for Claude Code. Codex/Astra no longer miss the old CLAUDE-only instructions.
 
 - **A busy screen's picture is laid out by the parts of the screen.** A screen is a set of handlers with no order between them, so on a hub screen the old rows-by-distance collapsed into one enormous row — the main screen of one app put 89 boxes side by side on a canvas over 28,000px wide, every line a near-horizontal sweep across all of it. The Steps tab now groups a screen's picture by region — the component that owns each handler, named in a small caption over its boxes — with each region a column where a step sits above what it sets in motion, tiled in the screen's own source order. At rest the picture hides only two things: the screen's own fan-out — one line into each region stands in for it — and lines that point back up; every other line draws where it leads, between two regions included, and selecting a step brings out its whole story in the side panel, link by link. A box nothing points at is the screen's own doing — run on render or mount, or from a binding written inline — the key says so, and selecting it lights its line from the screen with what fires it. The same app's widest screen now lays out under 3,500px with every line local, and the whole picture fits on screen when it opens. Endpoints, handlers and the in-order reading are untouched, and nothing needs a re-index: the regions come from the same walk that draws the steps.
@@ -134,6 +136,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Trails are plain JSON, one file per trail, under `.codegraph/ui/trails/` — already ignored by git, so they stay yours by default. **Export** hands you the file if you'd rather commit one for the team. This is the only thing the viewer writes: it still never indexes, never changes your graph, and never touches a line of your code. Start it with `codegraph ui --read-only` and it won't write even that — saved trails can still be opened, just not saved or deleted.
 
 ### Fixes
+
+- **A search no longer passes off a comment as a definition.** Symbol search also looks inside doc comments, so searching for a function that isn't indexed could return an unrelated one whose comment happened to mention it — with nothing to say the symbol was never found. When every match is a mention rather than a declaration, CodeGraph now says so instead of presenting the nearest one as the answer.
 
 #### MCP / indexing
 

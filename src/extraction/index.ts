@@ -101,6 +101,13 @@ export interface IndexResult {
   filesDiscovered?: number;
   nodesCreated: number;
   edgesCreated: number;
+  /**
+   * Extensions the scan passed over for lack of a grammar, `.vala` → 6. Only
+   * set by full-index runs (indexAll). Lets `init`/`index` name a coverage gap
+   * at the moment it is created, instead of reporting a file count that quietly
+   * excludes a project's main language.
+   */
+  unindexedExtensions?: Record<string, number>;
   errors: ExtractionError[];
   durationMs: number;
 }
@@ -1350,6 +1357,35 @@ function collectGitStatus(repoDir: string, prefix: string, out: GitChanges, over
 }
 
 /**
+ * Tally of files the scan passed over for lack of a grammar, keyed by lowercase
+ * extension (`.vala` → 6). Threaded through the scan as an optional OUT-param so
+ * no caller that doesn't care changes shape.
+ *
+ * The gap this closes: a project's files are dropped purely on extension, and
+ * nothing downstream ever said so. A GTK app whose 7,865-line Vala UI is the
+ * whole front end reported "Indexed 54 files" and answered queries about it
+ * anyway — from the C++ half, because the query path had no way to know the
+ * question was about code it had never seen. Skipping is correct; skipping
+ * SILENTLY is what turns a known limitation into a wrong answer.
+ */
+export type SkippedExtensions = Map<string, number>;
+
+/** `project_metadata` key holding the last full index's {@link SkippedExtensions}. */
+export const UNINDEXED_EXTENSIONS_KEY = 'unindexed_extensions';
+
+/** Record one passed-over file against its extension. Extensionless files are
+ *  not counted — they are overwhelmingly READMEs, licences and lockfiles, and
+ *  reporting them would bury the signal we want. */
+function noteSkipped(relativePath: string, skipped: SkippedExtensions | undefined): void {
+  if (!skipped) return;
+  const dot = relativePath.lastIndexOf('.');
+  const slash = relativePath.lastIndexOf('/');
+  if (dot < 0 || dot < slash + 2) return; // no extension, or a dotfile like `.gitignore`
+  const ext = relativePath.slice(dot).toLowerCase();
+  skipped.set(ext, (skipped.get(ext) ?? 0) + 1);
+}
+
+/**
  * Recursively scan a directory for source files.
  *
  * In git repos, uses `git ls-files` (inherently respects .gitignore at all
@@ -1358,7 +1394,8 @@ function collectGitStatus(repoDir: string, prefix: string, out: GitChanges, over
  */
 export function scanDirectory(
   rootDir: string,
-  onProgress?: (current: number, file: string) => void
+  onProgress?: (current: number, file: string) => void,
+  skipped?: SkippedExtensions
 ): string[] {
   // Custom extension → language overrides from the project's codegraph.json.
   const overrides = loadExtensionOverrides(rootDir);
@@ -1373,13 +1410,15 @@ export function scanDirectory(
         files.push(filePath);
         count++;
         onProgress?.(count, filePath);
+      } else {
+        noteSkipped(filePath, skipped);
       }
     }
     return files;
   }
 
   // Fallback: walk filesystem for non-git projects
-  return scanDirectoryWalk(rootDir, onProgress);
+  return scanDirectoryWalk(rootDir, onProgress, skipped);
 }
 
 /**
@@ -1388,7 +1427,8 @@ export function scanDirectory(
  */
 export async function scanDirectoryAsync(
   rootDir: string,
-  onProgress?: (current: number, file: string) => void
+  onProgress?: (current: number, file: string) => void,
+  skipped?: SkippedExtensions
 ): Promise<string[]> {
   // Custom extension → language overrides from the project's codegraph.json.
   const overrides = loadExtensionOverrides(rootDir);
@@ -1406,12 +1446,14 @@ export async function scanDirectoryAsync(
         if (count % 100 === 0) {
           await new Promise<void>(r => setImmediate(r));
         }
+      } else {
+        noteSkipped(filePath, skipped);
       }
     }
     return files;
   }
 
-  return scanDirectoryWalk(rootDir, onProgress);
+  return scanDirectoryWalk(rootDir, onProgress, skipped);
 }
 
 /**
@@ -1419,7 +1461,8 @@ export async function scanDirectoryAsync(
  */
 function scanDirectoryWalk(
   rootDir: string,
-  onProgress?: (current: number, file: string) => void
+  onProgress?: (current: number, file: string) => void,
+  skipped?: SkippedExtensions
 ): string[] {
   const files: string[] = [];
   let count = 0;
@@ -1502,10 +1545,14 @@ function scanDirectoryWalk(
               walk(fullPath, active);
             }
           } else if (stat.isFile()) {
-            if (!isIgnored(fullPath, false, active) && isSourceFile(relativePath, overrides)) {
-              files.push(relativePath);
-              count++;
-              onProgress?.(count, relativePath);
+            if (!isIgnored(fullPath, false, active)) {
+              if (isSourceFile(relativePath, overrides)) {
+                files.push(relativePath);
+                count++;
+                onProgress?.(count, relativePath);
+              } else {
+                noteSkipped(relativePath, skipped);
+              }
             }
           }
         } catch {
@@ -1519,10 +1566,14 @@ function scanDirectoryWalk(
           walk(fullPath, active);
         }
       } else if (entry.isFile()) {
-        if (!isIgnored(fullPath, false, active) && isSourceFile(relativePath, overrides)) {
-          files.push(relativePath);
-          count++;
-          onProgress?.(count, relativePath);
+        if (!isIgnored(fullPath, false, active)) {
+          if (isSourceFile(relativePath, overrides)) {
+            files.push(relativePath);
+            count++;
+            onProgress?.(count, relativePath);
+          } else {
+            noteSkipped(relativePath, skipped);
+          }
         }
       }
     }
@@ -1599,6 +1650,12 @@ export class ExtractionOrchestrator {
    * hasn't run yet so single-file re-index paths can detect on the spot.
    */
   private detectedFrameworkNames: string[] | null = null;
+  /**
+   * Extensions the last indexAll() passed over for lack of a grammar. Persisted
+   * to `project_metadata` at the end of that run so `codegraph status` can name
+   * the gap on a later invocation — a scan the status command must not repeat.
+   */
+  private lastSkippedExtensions: SkippedExtensions | null = null;
   /**
    * Scope matcher for SCOPED syncs, memoized on the mtimes of the two root
    * files it is derived from (`codegraph.json`, `.gitignore`). See
@@ -1769,6 +1826,9 @@ export class ExtractionOrchestrator {
     // early-run 5-10s single stalls were observed on 95k-file repos but never
     // attributed — these labels settle scan vs framework-detect vs grammars.
     const tScan = Date.now();
+    // Collected during the one scan we already do, then persisted so `status`
+    // can report the gap without re-walking the tree.
+    const skippedExtensions: SkippedExtensions = new Map();
     const files = await scanDirectoryAsync(this.rootDir, (current, file) => {
       onProgress?.({
         phase: 'scanning',
@@ -1776,7 +1836,8 @@ export class ExtractionOrchestrator {
         total: 0,
         currentFile: file,
       });
-    });
+    }, skippedExtensions);
+    this.lastSkippedExtensions = skippedExtensions;
     if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] scan: ${Date.now() - tScan}ms (${files.length} files)`);
 
     // A re-index over an existing DB skips unchanged-hash files at the store,
@@ -2319,6 +2380,15 @@ export class ExtractionOrchestrator {
     // Shut down the parse worker pool.
     if (pool) await pool.destroy();
 
+    // Persist the passed-over-for-lack-of-a-grammar tally so `status` can name
+    // the gap later without re-walking. Written even when empty, so a project
+    // that gains coverage (a codegraph.json mapping, a new grammar) clears the
+    // previous run's report instead of reporting a gap that no longer exists.
+    this.queries.setMetadata(
+      UNINDEXED_EXTENSIONS_KEY,
+      JSON.stringify(Object.fromEntries(this.lastSkippedExtensions ?? []))
+    );
+
     return {
       success: filesIndexed > 0 || errors.filter((e) => e.severity === 'error').length === 0,
       filesIndexed,
@@ -2327,6 +2397,7 @@ export class ExtractionOrchestrator {
       filesDiscovered: total,
       nodesCreated: totalNodes,
       edgesCreated: totalEdges,
+      unindexedExtensions: Object.fromEntries(this.lastSkippedExtensions ?? []),
       errors,
       durationMs: Date.now() - startTime,
     };

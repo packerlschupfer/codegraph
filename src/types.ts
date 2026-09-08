@@ -468,6 +468,21 @@ export interface SearchResult {
 
   /** Matched text snippets for highlighting */
   highlights?: string[];
+
+  /**
+   * Whether the query matched this symbol's IDENTITY (its name or qualified
+   * name) rather than only its prose. The FTS index covers `docstring` too, so
+   * a query that reads like a symbol name can match a comment that merely
+   * MENTIONS it — e.g. searching `apply_props` returned a C++ `fileStamp`
+   * whose doc comment says "calls this on every apply_props". Ranked and
+   * rendered identically to a real definition, that is a confident wrong
+   * answer: nothing told the caller the index has no such symbol.
+   *
+   * `false` means "found in comments/docs only". Callers that present results
+   * to a human or an agent MUST say so when every result is `false`, instead
+   * of showing a prose hit as though it were a declaration.
+   */
+  matchedName?: boolean;
 }
 
 /**

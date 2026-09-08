@@ -173,6 +173,76 @@ export const EXTENSION_MAP: Record<string, Language> = {
 };
 
 /**
+ * Extensions that are legitimately absent from the index and must NOT be
+ * reported as a coverage gap: documentation, data, media, fonts, archives,
+ * build products and lockfiles. Every repository is full of these, so listing
+ * them alongside a genuinely missing LANGUAGE would bury the one line that
+ * matters under forty that don't — the same "answer instead of report" failure
+ * the reporting exists to fix, in reverse.
+ *
+ * Deliberately a denylist, not an allowlist of known-source extensions: a
+ * language CodeGraph has never heard of is exactly the case worth surfacing,
+ * and an allowlist could only ever name languages someone already thought of.
+ */
+const NON_CODE_EXTENSIONS = new Set<string>([
+  // docs & text
+  '.md', '.markdown', '.rst', '.txt', '.adoc', '.tex', '.pdf', '.rtf', '.doc', '.docx',
+  // data & config that carries no call graph. These are deliberately not
+  // indexed rather than missing a grammar, and "map .json to a language" is
+  // advice no one should take — so they are noise in a coverage report.
+  // Genuine SOURCE that happens to be unmapped (.sh, .sql, .html, .css,
+  // .proto, .vala) is NOT listed here: that is the signal worth surfacing.
+  '.csv', '.tsv', '.log', '.lock', '.sum', '.map', '.min.js', '.snap', '.pot', '.po', '.mo',
+  '.json', '.jsonc', '.json5', '.toml', '.ini', '.cfg', '.conf', '.properties',
+  '.plist', '.xsd', '.dtd', '.xslt',
+  // images, media, fonts
+  '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.bmp', '.webp', '.tiff', '.avif',
+  '.mp3', '.mp4', '.wav', '.ogg', '.flac', '.webm', '.mov', '.avi',
+  '.ttf', '.otf', '.woff', '.woff2', '.eot',
+  // archives & binaries
+  '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar', '.jar', '.war', '.bin', '.exe',
+  '.dll', '.so', '.dylib', '.a', '.o', '.obj', '.class', '.pyc', '.pyo', '.wasm',
+  // misc
+  '.gitkeep', '.editorconfig', '.env', '.pem', '.key', '.crt', '.der',
+]);
+
+/**
+ * The extensions from a scan's passed-over tally that are worth telling a user
+ * about, most files first. Filters {@link NON_CODE_EXTENSIONS} and caps the
+ * list so the report stays one glanceable line or two.
+ *
+ * Exists because a file dropped for lack of a grammar was previously invisible:
+ * a project reported its indexed file count and nothing else, so a codebase
+ * whose main language has no grammar looked fully indexed and answered queries
+ * from whatever OTHER language it did cover.
+ */
+export function notableUnindexedExtensions(
+  tally: Record<string, number> | ReadonlyMap<string, number>,
+  limit = 5
+): Array<{ ext: string; count: number }> {
+  const entries = tally instanceof Map ? [...tally.entries()] : Object.entries(tally as Record<string, number>);
+  return entries
+    .filter(([ext]) => !NON_CODE_EXTENSIONS.has(ext))
+    .map(([ext, count]) => ({ ext, count }))
+    .sort((a, b) => b.count - a.count || a.ext.localeCompare(b.ext))
+    .slice(0, limit);
+}
+
+/**
+ * One-line summary of a scan's coverage gap, or null when there is nothing
+ * worth saying. Shared by `init`/`index` (which report it as they create the
+ * gap) and `status` (which reports the gap the last index recorded).
+ */
+export function formatUnindexedExtensions(
+  tally: Record<string, number> | ReadonlyMap<string, number>
+): string | null {
+  const notable = notableUnindexedExtensions(tally);
+  if (notable.length === 0) return null;
+  const parts = notable.map(({ ext, count }) => `${count} ${ext}`);
+  return `Not indexed (no grammar): ${parts.join(', ')}. Map them to a supported language in codegraph.json if they are source.`;
+}
+
+/**
  * Whether a file is one CodeGraph can parse, based purely on its extension.
  * This is the single source of truth for "should we index this file" — derived
  * from EXTENSION_MAP so parser support and indexing selection never drift.

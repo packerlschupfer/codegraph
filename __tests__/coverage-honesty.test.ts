@@ -1,0 +1,100 @@
+/**
+ * Two ways the index used to answer a question it could not see the answer to,
+ * instead of saying so.
+ *
+ * 1. FTS indexes `docstring`, so a query that reads like a symbol name matches
+ *    a COMMENT that merely mentions it. Searching a GTK project for the Vala
+ *    function `apply_props` returned an unrelated C++ `fileStamp` whose doc
+ *    comment says "calls this on every apply_props" — ranked and rendered like
+ *    a definition, with nothing to say the index holds no such symbol.
+ * 2. Files are dropped on extension alone and nothing ever reported it. The
+ *    same project indexed 54 files and never mentioned the 7,865 lines of Vala
+ *    it had skipped, so the gap was invisible until someone compared by hand.
+ */
+
+import { describe, it, expect, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import CodeGraph from '../src/index';
+import { scanDirectory, UNINDEXED_EXTENSIONS_KEY } from '../src/extraction';
+import { notableUnindexedExtensions, formatUnindexedExtensions } from '../src/extraction/grammars';
+
+let tempDir: string | undefined;
+let cg: CodeGraph | null = null;
+
+afterEach(() => {
+  cg?.close();
+  cg = null;
+  if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  tempDir = undefined;
+});
+
+describe('a docstring mention is not a definition', () => {
+  it('marks a prose-only hit matchedName:false, and a real one true', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-prose-'));
+    fs.writeFileSync(
+      path.join(tempDir, 'engine.ts'),
+      [
+        '/**',
+        ' * Cache stamp for a file on disk.',
+        ' * The view calls this on every apply_props and every selection change.',
+        ' */',
+        'export function fileStamp(p: string): number {',
+        '  return p.length;',
+        '}',
+        '',
+      ].join('\n')
+    );
+    cg = await CodeGraph.init(tempDir, { index: true });
+
+    const results = cg.searchNodes('apply_props', { limit: 10 });
+    // The comment genuinely mentions it, so a hit is expected — what must not
+    // happen is presenting it as the symbol.
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.some((r) => r.node.name === 'fileStamp')).toBe(true);
+    expect(results.every((r) => r.matchedName === false)).toBe(true);
+
+    // A query for the symbol that really exists is unaffected.
+    const real = cg.searchNodes('fileStamp', { limit: 10 });
+    expect(real.some((r) => r.node.name === 'fileStamp' && r.matchedName === true)).toBe(true);
+  });
+});
+
+describe('files skipped for lack of a grammar are reported', () => {
+  it('tallies skipped extensions during the scan and persists them for status', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-skip-'));
+    fs.writeFileSync(path.join(tempDir, 'a.vala'), 'void main () { }\n');
+    fs.writeFileSync(path.join(tempDir, 'b.vala'), 'void other () { }\n');
+    fs.writeFileSync(path.join(tempDir, 'ok.py'), 'def f():\n    return 1\n');
+    fs.writeFileSync(path.join(tempDir, 'README.md'), '# docs\n');
+    fs.writeFileSync(path.join(tempDir, 'logo.png'), 'not really a png');
+
+    const skipped = new Map<string, number>();
+    const files = scanDirectory(tempDir, undefined, skipped);
+    expect(files.some((f) => f.endsWith('ok.py'))).toBe(true);
+    expect(skipped.get('.vala')).toBe(2);
+
+    // Docs and images are deliberately absent, not a coverage gap — reporting
+    // them would bury the one line that matters.
+    const notable = notableUnindexedExtensions(skipped);
+    expect(notable.map((n) => n.ext)).toEqual(['.vala']);
+    expect(formatUnindexedExtensions(skipped)).toContain('2 .vala');
+
+    // And a full index records it where `codegraph status` can read it back.
+    cg = await CodeGraph.init(tempDir, { index: true });
+    const stored = JSON.parse(cg.getMetadata(UNINDEXED_EXTENSIONS_KEY) ?? '{}');
+    expect(stored['.vala']).toBe(2);
+  });
+
+  it('clears the recorded gap once the extension is mapped in codegraph.json', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-skip2-'));
+    fs.writeFileSync(path.join(tempDir, 'a.vala'), 'void main () { }\n');
+    fs.writeFileSync(path.join(tempDir, 'codegraph.json'), JSON.stringify({ extensions: { '.vala': 'java' } }));
+
+    cg = await CodeGraph.init(tempDir, { index: true });
+    const stored = JSON.parse(cg.getMetadata(UNINDEXED_EXTENSIONS_KEY) ?? '{}');
+    expect(stored['.vala']).toBeUndefined();
+    expect(notableUnindexedExtensions(stored)).toEqual([]);
+  });
+});

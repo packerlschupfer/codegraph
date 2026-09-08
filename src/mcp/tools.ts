@@ -2335,7 +2335,24 @@ export class ToolHandler {
       return aGen - bGen;
     });
 
+    // Every hit came from a docstring/comment rather than any symbol's name.
+    // FTS indexes `docstring`, so a comment that merely MENTIONS a name matches
+    // a query for it — and formatted like any other result it reads as a
+    // definition, sending the agent to an unrelated symbol in another language.
+    // Success-shaped guidance, never isError: this is an expected condition and
+    // an error here teaches the agent to stop calling codegraph at all.
+    const proseOnly = ranked.every((r) => r.matchedName === false);
     const formatted = this.formatSearchResults(ranked);
+    if (proseOnly) {
+      return this.textResult(
+        this.truncateOutput(
+          `No indexed symbol's name matches "${query}". The ${ranked.length === 1 ? 'match' : 'matches'} below ` +
+            `mention it in comments or docs only — treat them as prose, not as a definition.\n\n` +
+            `If you expected a symbol here, its language may not be indexed: run \`codegraph status\` ` +
+            `to see which languages this project's index covers.\n\n${formatted}`
+        )
+      );
+    }
     return this.textResult(this.truncateOutput(formatted));
   }
 

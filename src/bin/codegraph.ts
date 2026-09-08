@@ -40,6 +40,9 @@ try {
 
 import { Command } from 'commander';
 import * as path from 'path';
+import { formatUnindexedExtensions, notableUnindexedExtensions } from '../extraction/grammars';
+import { UNINDEXED_EXTENSIONS_KEY } from '../extraction';
+import { safeJsonParse } from '../utils';
 import * as fs from 'fs';
 import { getCodeGraphDir, isInitialized, unsafeIndexRootReason, findNearestCodeGraphRoot, planFrontload, hasStructuralKeyword, extractCodeTokens, capPromptHookInjection } from '../directory';
 import { extractProseCandidates } from '../search/identifier-segments';
@@ -369,6 +372,8 @@ type IndexResult = {
   filesErrored: number;
   nodesCreated: number;
   edgesCreated: number;
+  /** Extensions the scan passed over for lack of a grammar (full index only). */
+  unindexedExtensions?: Record<string, number>;
   errors: Array<{ message: string; filePath?: string; severity: string; code?: string }>;
   durationMs: number;
 };
@@ -403,6 +408,13 @@ function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexR
       clack.log.success(`Indexed ${formatNumber(result.filesIndexed)} files`);
     }
     clack.log.info(`${formatNumber(result.nodesCreated)} nodes, ${formatNumber(result.edgesCreated)} edges in ${formatDuration(result.durationMs)}`);
+    // Name the coverage gap at the moment it is created. Without this the file
+    // count above is the only thing a user sees, and it looks complete even
+    // when the project's main language has no grammar.
+    if (result.unindexedExtensions) {
+      const gap = formatUnindexedExtensions(result.unindexedExtensions);
+      if (gap) clack.log.warn(gap);
+    }
     // A PARTIAL index (files silently dropped mid-pipeline) must not pass
     // as a clean run — it's the difference between "indexed the repo" and
     // "indexed most of the repo, quietly". Only the completeness
@@ -1105,6 +1117,25 @@ program
       }
       console.log();
 
+      // What this index CANNOT see. The language breakdown above only lists what
+      // was parsed, so on its own it reads as the whole project — which is how a
+      // repo whose main language has no grammar looks fully indexed. Recorded by
+      // the last full index; absent on an index built before this was added.
+      const unindexedRaw = cg.getMetadata(UNINDEXED_EXTENSIONS_KEY);
+      if (unindexedRaw) {
+        const notable = notableUnindexedExtensions(
+          safeJsonParse<Record<string, number>>(unindexedRaw, {})
+        );
+        if (notable.length > 0) {
+          console.log(chalk.bold('Not Indexed (no grammar):'));
+          for (const { ext, count } of notable) {
+            console.log(`  ${ext.padEnd(15)} ${formatNumber(count)}`);
+          }
+          console.log(chalk.dim('  Map these to a supported language in codegraph.json if they are source.'));
+          console.log();
+        }
+      }
+
       // Pending changes
       const totalChanges = changes.added.length + changes.modified.length + changes.removed.length;
       if (totalChanges > 0) {
@@ -1190,7 +1221,22 @@ program
         if (results.length === 0) {
           info(`No results found for "${search}"`);
         } else {
-          console.log(chalk.bold(`\nSearch Results for "${search}":\n`));
+          // Every hit came from a docstring/comment, not from any symbol's name
+          // — the index has nothing CALLED this. Say so: rendered as a normal
+          // result list, a prose mention reads as a definition and sends the
+          // caller to an unrelated symbol (a search for `apply_props` landing on
+          // a C++ `fileStamp` whose comment mentions it).
+          const proseOnly = results.every((r) => r.matchedName === false);
+          if (proseOnly) {
+            info(`No indexed symbol's name matches "${search}".`);
+            console.log(
+              chalk.dim(
+                `\n${results.length === 1 ? '1 result mentions' : `${results.length} results mention`} it in comments or docs only:\n`
+              )
+            );
+          } else {
+            console.log(chalk.bold(`\nSearch Results for "${search}":\n`));
+          }
 
           // Results arrive already ranked by relevance, so the order conveys
           // it. We don't print the raw score: it's an unbounded BM25/FTS value
@@ -1203,7 +1249,8 @@ program
 
             console.log(
               chalk.cyan(node.kind.padEnd(12)) +
-              chalk.white(node.name)
+              chalk.white(node.name) +
+              (result.matchedName === false && !proseOnly ? chalk.dim('  (mentioned in docs)') : '')
             );
             console.log(chalk.dim(`  ${location}`));
             if (node.signature) {

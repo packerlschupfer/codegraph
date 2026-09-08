@@ -102,6 +102,28 @@ describe('files skipped for lack of a grammar are reported', () => {
     expect(stored['.vala']).toBe(2);
   });
 
+  it('sees extensionless build files, which have no extension to key on', async () => {
+    // Build definitions are extensionless by convention, so an extension-only
+    // tally cannot see them at all — a project whose whole build is a plain
+    // Makefile would be told nothing was skipped.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-basename-'));
+    fs.writeFileSync(path.join(tempDir, 'Makefile'), 'all:\n\techo hi\n');
+    fs.writeFileSync(path.join(tempDir, 'Dockerfile'), 'FROM scratch\n');
+    fs.writeFileSync(path.join(tempDir, 'ok.py'), 'def f():\n    return 1\n');
+    // Noise that must stay filtered, extensionless and dotfile alike.
+    fs.writeFileSync(path.join(tempDir, 'LICENSE'), 'MIT\n');
+    fs.writeFileSync(path.join(tempDir, 'CHANGELOG'), 'v1\n');
+    fs.writeFileSync(path.join(tempDir, '.gitignore'), 'node_modules\n');
+    fs.mkdirSync(path.join(tempDir, 'debian'));
+    fs.writeFileSync(path.join(tempDir, 'debian', 'rules'), '#!/usr/bin/make -f\n');
+    fs.writeFileSync(path.join(tempDir, 'debian', 'control'), 'Source: x\n');
+
+    const skipped = new Map<string, number>();
+    scanDirectory(tempDir, undefined, skipped);
+    const reported = notableUnindexedExtensions(skipped).map((n) => n.ext).sort();
+    expect(reported).toEqual(['Dockerfile', 'Makefile', 'rules']);
+  });
+
   it('clears the recorded gap once the extension is mapped in codegraph.json', async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-skip2-'));
     fs.writeFileSync(path.join(tempDir, 'a.vala'), 'void main () { }\n');

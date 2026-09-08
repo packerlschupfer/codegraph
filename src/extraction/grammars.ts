@@ -213,6 +213,23 @@ const NON_CODE_EXTENSIONS = new Set<string>([
 ]);
 
 /**
+ * Extensionless FILENAMES that are not source, matched case-insensitively.
+ *
+ * The counterpart to {@link NON_CODE_EXTENSIONS} now that the scan keys an
+ * extensionless file by its name: without this, every repository's `LICENSE`
+ * and debian's `changelog`/`control`/`copyright` would crowd the report. What
+ * is deliberately NOT here is `rules` — debian's `rules` file opens
+ * `#!/usr/bin/make -f` and is a Makefile, which is build source by the same
+ * standard that keeps `.build` in the report.
+ */
+const NON_CODE_BASENAMES = new Set<string>([
+  'license', 'licence', 'copying', 'copyright', 'notice', 'patents', 'authors',
+  'contributors', 'contributing', 'maintainers', 'codeowners', 'owners',
+  'readme', 'changelog', 'changes', 'history', 'news', 'todo', 'install',
+  'version', 'manifest', 'thanks', 'control', 'compat', 'format', 'source',
+]);
+
+/**
  * The extensions from a scan's passed-over tally that are worth telling a user
  * about, most files first. Filters {@link NON_CODE_EXTENSIONS} and caps the
  * list so the report stays one glanceable line or two.
@@ -227,7 +244,7 @@ export function notableUnindexedExtensions(
 ): Array<{ ext: string; count: number }> {
   const entries = tally instanceof Map ? [...tally.entries()] : Object.entries(tally as Record<string, number>);
   return entries
-    .filter(([ext]) => !NON_CODE_EXTENSIONS.has(ext))
+    .filter(([key]) => !NON_CODE_EXTENSIONS.has(key) && !NON_CODE_BASENAMES.has(key.toLowerCase()))
     .map(([ext, count]) => ({ ext, count }))
     .sort((a, b) => b.count - a.count || a.ext.localeCompare(b.ext));
 }

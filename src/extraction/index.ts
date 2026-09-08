@@ -1373,16 +1373,30 @@ export type SkippedExtensions = Map<string, number>;
 /** `project_metadata` key holding the last full index's {@link SkippedExtensions}. */
 export const UNINDEXED_EXTENSIONS_KEY = 'unindexed_extensions';
 
-/** Record one passed-over file against its extension. Extensionless files are
- *  not counted — they are overwhelmingly READMEs, licences and lockfiles, and
- *  reporting them would bury the signal we want. */
+/**
+ * Record one passed-over file, keyed by its extension — or by its NAME when it
+ * has none.
+ *
+ * The basename half is not a nicety. Build definitions are extensionless by
+ * convention (`Makefile`, `GNUmakefile`, `Dockerfile`, `Jenkinsfile`,
+ * `Rakefile`, `Vagrantfile`, `configure`, debian's `rules`), so an
+ * extension-only tally cannot see them AT ALL: a project whose entire build is
+ * a plain `Makefile` would be told nothing was skipped, by a report whose whole
+ * purpose is naming what it skipped. Whether any given name deserves filtering
+ * is then an ordinary denylist decision, taken in one place, rather than a
+ * silent consequence of how a file happens to be named.
+ *
+ * Dotfiles (`.gitignore`, `.editorconfig`) stay out: they are configuration by
+ * convention, and unlike an extensionless build file there is no counter-example
+ * where one carries a call graph.
+ */
 function noteSkipped(relativePath: string, skipped: SkippedExtensions | undefined): void {
   if (!skipped) return;
-  const dot = relativePath.lastIndexOf('.');
-  const slash = relativePath.lastIndexOf('/');
-  if (dot < 0 || dot < slash + 2) return; // no extension, or a dotfile like `.gitignore`
-  const ext = relativePath.slice(dot).toLowerCase();
-  skipped.set(ext, (skipped.get(ext) ?? 0) + 1);
+  const base = relativePath.slice(relativePath.lastIndexOf('/') + 1);
+  if (base.startsWith('.')) return;
+  const dot = base.lastIndexOf('.');
+  const key = dot > 0 ? base.slice(dot).toLowerCase() : base;
+  skipped.set(key, (skipped.get(key) ?? 0) + 1);
 }
 
 /**

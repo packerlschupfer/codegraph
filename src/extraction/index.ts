@@ -1386,14 +1386,23 @@ export const UNINDEXED_EXTENSIONS_KEY = 'unindexed_extensions';
  * is then an ordinary denylist decision, taken in one place, rather than a
  * silent consequence of how a file happens to be named.
  *
- * Dotfiles (`.gitignore`, `.editorconfig`) stay out: they are configuration by
- * convention, and unlike an extensionless build file there is no counter-example
- * where one carries a call graph.
+ * An extensionless DOTFILE is keyed the same way, by its whole name. A previous
+ * version excluded dotfiles outright on the reasoning that they are all
+ * configuration; the counter-example is `.bashrc`, which is shell functions
+ * calling shell functions — the same bytes as a `lib.sh` that the report is
+ * happy to name. A dotfiles repository (`.bashrc`, `.zshrc`, `.profile`,
+ * `.aliases`, `.vimrc`) is a whole common category where that exclusion would
+ * report nothing skipped while skipping the entire repo. Which dotfiles are
+ * configuration is a denylist decision like any other, taken in one visible
+ * place rather than by an early return that emits no evidence.
+ *
+ * Note this only ever concerns EXTENSIONLESS dotfiles: `.eslintrc.js` has an
+ * extension, so it is indexed as JavaScript exactly like a non-dotted twin, and
+ * `.eslintrc.json` keys as `.json` and filters with every other JSON file.
  */
 function noteSkipped(relativePath: string, skipped: SkippedExtensions | undefined): void {
   if (!skipped) return;
   const base = relativePath.slice(relativePath.lastIndexOf('/') + 1);
-  if (base.startsWith('.')) return;
   const dot = base.lastIndexOf('.');
   const key = dot > 0 ? base.slice(dot).toLowerCase() : base;
   skipped.set(key, (skipped.get(key) ?? 0) + 1);

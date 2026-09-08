@@ -118,10 +118,42 @@ describe('files skipped for lack of a grammar are reported', () => {
     fs.writeFileSync(path.join(tempDir, 'debian', 'rules'), '#!/usr/bin/make -f\n');
     fs.writeFileSync(path.join(tempDir, 'debian', 'control'), 'Source: x\n');
 
+    // A dotfile can be source too: `.bashrc` is shell functions calling shell
+    // functions — the same bytes as a `lib.sh` the report is happy to name.
+    fs.writeFileSync(path.join(tempDir, '.bashrc'), 'greet() { echo hi; }\nmain() { greet; }\n');
+    fs.writeFileSync(path.join(tempDir, '.vimrc'), 'set number\n');
+
     const skipped = new Map<string, number>();
     scanDirectory(tempDir, undefined, skipped);
     const reported = notableUnindexedExtensions(skipped).map((n) => n.ext).sort();
-    expect(reported).toEqual(['Dockerfile', 'Makefile', 'rules']);
+    expect(reported).toEqual(['.bashrc', '.vimrc', 'Dockerfile', 'Makefile', 'rules']);
+  });
+
+  it('still records the gap when NOTHING could be indexed', async () => {
+    // A dotfiles repo, or any project entirely in an unsupported language, ends
+    // up with zero indexed files — which is exactly where "here is what was
+    // passed over" is the whole of the useful answer.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-nothing-'));
+    fs.writeFileSync(path.join(tempDir, '.bashrc'), 'greet() { echo hi; }\n');
+    fs.writeFileSync(path.join(tempDir, '.aliases'), 'alias ll="ls -l"\n');
+    fs.writeFileSync(path.join(tempDir, '.gitignore'), 'node_modules\n');
+
+    cg = await CodeGraph.init(tempDir, { index: true });
+    const stored = JSON.parse(cg.getMetadata(UNINDEXED_EXTENSIONS_KEY) ?? '{}');
+    expect(notableUnindexedExtensions(stored).map((n) => n.ext).sort()).toEqual(['.aliases', '.bashrc']);
+  });
+
+  it('indexes a dotfile that carries a supported extension, and never reports it', async () => {
+    // `.eslintrc.js` is JavaScript and must be indexed exactly like a non-dotted
+    // twin — the dotfile handling above concerns EXTENSIONLESS names only.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dotext-'));
+    fs.writeFileSync(path.join(tempDir, '.eslintrc.js'), 'function helper() { return 1 }\nfunction main() { return helper() }\n');
+    cg = await CodeGraph.init(tempDir, { index: true });
+    const names = cg.getNodesByKind('function').map((n) => n.name);
+    expect(names).toContain('helper');
+    expect(names).toContain('main');
+    const stored = JSON.parse(cg.getMetadata(UNINDEXED_EXTENSIONS_KEY) ?? '{}');
+    expect(stored['.js']).toBeUndefined();
   });
 
   it('clears the recorded gap once the extension is mapped in codegraph.json', async () => {

@@ -227,6 +227,16 @@ const NON_CODE_BASENAMES = new Set<string>([
   'contributors', 'contributing', 'maintainers', 'codeowners', 'owners',
   'readme', 'changelog', 'changes', 'history', 'news', 'todo', 'install',
   'version', 'manifest', 'thanks', 'control', 'compat', 'format', 'source',
+  // Extensionless DOTFILES that are configuration. Listed here rather than
+  // excluded wholesale, because `.bashrc` / `.zshrc` / `.profile` / `.vimrc`
+  // are shell and editor SOURCE — a dotfiles repo is largely made of them, and
+  // blanket-excluding dotfiles reported such a repo as fully covered.
+  '.gitignore', '.gitattributes', '.gitmodules', '.gitconfig', '.mailmap',
+  '.dockerignore', '.npmignore', '.eslintignore', '.prettierignore', '.stylelintignore',
+  '.gcloudignore', '.hgignore', '.npmrc', '.yarnrc', '.nvmrc', '.babelrc',
+  '.browserslistrc', '.flake8', '.coveragerc', '.pylintrc', '.dvcignore',
+  '.node-version', '.python-version', '.ruby-version', '.tool-versions',
+  '.ds_store', '.keep', '.watchmanconfig',
 ]);
 
 /**

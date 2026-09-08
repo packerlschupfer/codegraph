@@ -439,6 +439,16 @@ function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexR
     clack.log.warn('No files found to index');
   }
 
+  // The coverage gap belongs on EVERY outcome, not just the successful one.
+  // A repository CodeGraph cannot read at all — a dotfiles repo, a project in
+  // an unsupported language — lands in the "no files found" branch above, which
+  // is precisely where "nothing was indexed, and here is what was passed over"
+  // is the whole of the useful answer.
+  if (result.unindexedExtensions && result.filesIndexed === 0) {
+    const gap = formatUnindexedExtensions(result.unindexedExtensions);
+    if (gap) clack.log.warn(gap);
+  }
+
   if (hasErrors) {
     const errorsByCode = new Map<string, number>();
     for (const err of result.errors) {

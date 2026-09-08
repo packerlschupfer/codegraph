@@ -1128,6 +1128,11 @@ program
         );
         if (notable.length > 0) {
           console.log(chalk.bold('Not Indexed (no grammar):'));
+          // The FULL list here, uncapped, like the two breakdowns above it.
+          // `status` is the detail view — the terse post-index warning is what
+          // caps at five, and it points here for the rest. Anything less would
+          // leave a project's own data formats crowding out a real source gap
+          // with no way to see past them.
           for (const { ext, count } of notable) {
             console.log(`  ${ext.padEnd(15)} ${formatNumber(count)}`);
           }

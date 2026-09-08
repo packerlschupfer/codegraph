@@ -25,7 +25,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New Features
 
-- **CodeGraph now tells you what it could not read.** Indexing a project reports the files it passed over for lack of a grammar — `Not indexed (no grammar): 6 .vala` — and `codegraph status` keeps showing it, so a codebase whose main language isn't supported no longer looks fully indexed. Documentation, images and config formats are left out of the report; genuine source is not. Map anything listed to a supported language with `extensions` in `codegraph.json`.
+- **CodeGraph now tells you what it could not read.** Indexing a project reports the files it passed over for lack of a grammar — `Not indexed (no grammar): 6 .vala` — and `codegraph status` keeps showing it, so a codebase whose main language isn't supported no longer looks fully indexed. Documentation, images, man pages and config formats are left out of the report; genuine source is not. `status` lists every gap, while the line printed after indexing shows the largest few and says how many more there are. Map anything listed to a supported language with `extensions` in `codegraph.json`.
 
 - **Codex and Astra read project guidance from `AGENTS.md`.** The canonical agent guide now lives in `AGENTS.md` (with a nested `docs/AGENTS.md` for long validation notes); `CLAUDE.md` is a thin `@AGENTS.md` wrapper for Claude Code. Codex/Astra no longer miss the old CLAUDE-only instructions.
 

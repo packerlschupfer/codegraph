@@ -81,6 +81,21 @@ describe('files skipped for lack of a grammar are reported', () => {
     expect(notable.map((n) => n.ext)).toEqual(['.vala']);
     expect(formatUnindexedExtensions(skipped)).toContain('2 .vala');
 
+    // A capped report says it is capped — a silently truncated list is the same
+    // partial-answer-as-complete failure this reporting exists to remove.
+    const many: Record<string, number> = {
+      '.vala': 9, '.puml': 8, '.sh': 7, '.build': 6, '.sql': 5, '.proto': 4, '.vapi': 3,
+    };
+    expect(notableUnindexedExtensions(many)).toHaveLength(7);
+    const line = formatUnindexedExtensions(many)!;
+    expect(line).toContain('and 2 more');
+    // and points somewhere the remainder can actually be read
+    expect(line).toContain('codegraph status');
+    // Man pages and desktop entries are documentation and packaging metadata,
+    // so they must not crowd a real source gap out of a capped list.
+    expect(notableUnindexedExtensions({ '.1': 1, '.desktop': 1, '.vapi': 1 }).map((n) => n.ext))
+      .toEqual(['.vapi']);
+
     // And a full index records it where `codegraph status` can read it back.
     cg = await CodeGraph.init(tempDir, { index: true });
     const stored = JSON.parse(cg.getMetadata(UNINDEXED_EXTENSIONS_KEY) ?? '{}');

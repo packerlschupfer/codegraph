@@ -202,6 +202,12 @@ const NON_CODE_EXTENSIONS = new Set<string>([
   // archives & binaries
   '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar', '.jar', '.war', '.bin', '.exe',
   '.dll', '.so', '.dylib', '.a', '.o', '.obj', '.class', '.pyc', '.pyo', '.wasm',
+  // man pages (`foo.1` … `foo.9`) and desktop/service unit files: documentation
+  // and packaging metadata respectively, so the same rule that drops .md and
+  // .ini drops these. Missed on the first pass, which let three files nobody
+  // can act on crowd a genuine source gap out of the report.
+  '.1', '.2', '.3', '.4', '.5', '.6', '.7', '.8', '.9',
+  '.desktop', '.service', '.socket', '.timer', '.mount', '.path', '.appdata', '.metainfo',
   // misc
   '.gitkeep', '.editorconfig', '.env', '.pem', '.key', '.crt', '.der',
 ]);
@@ -217,16 +223,17 @@ const NON_CODE_EXTENSIONS = new Set<string>([
  * from whatever OTHER language it did cover.
  */
 export function notableUnindexedExtensions(
-  tally: Record<string, number> | ReadonlyMap<string, number>,
-  limit = 5
+  tally: Record<string, number> | ReadonlyMap<string, number>
 ): Array<{ ext: string; count: number }> {
   const entries = tally instanceof Map ? [...tally.entries()] : Object.entries(tally as Record<string, number>);
   return entries
     .filter(([ext]) => !NON_CODE_EXTENSIONS.has(ext))
     .map(([ext, count]) => ({ ext, count }))
-    .sort((a, b) => b.count - a.count || a.ext.localeCompare(b.ext))
-    .slice(0, limit);
+    .sort((a, b) => b.count - a.count || a.ext.localeCompare(b.ext));
 }
+
+/** How many extensions a coverage report shows before it says "and N more". */
+export const UNINDEXED_REPORT_LIMIT = 5;
 
 /**
  * One-line summary of a scan's coverage gap, or null when there is nothing
@@ -238,8 +245,18 @@ export function formatUnindexedExtensions(
 ): string | null {
   const notable = notableUnindexedExtensions(tally);
   if (notable.length === 0) return null;
-  const parts = notable.map(({ ext, count }) => `${count} ${ext}`);
-  return `Not indexed (no grammar): ${parts.join(', ')}. Map them to a supported language in codegraph.json if they are source.`;
+  // A capped list must SAY it is capped. Showing the top five silently is the
+  // same failure this reporting exists to remove — a partial answer presented
+  // as a complete one — and on a repo with a long tail the one extension that
+  // matters can be the one cut off.
+  const shown = notable.slice(0, UNINDEXED_REPORT_LIMIT);
+  const rest = notable.length - shown.length;
+  const parts = shown.map(({ ext, count }) => `${count} ${ext}`);
+  // Point at the full list rather than leaving the remainder unreachable: no
+  // denylist can anticipate a project's bespoke data formats (`.gcuestack`,
+  // debian's `.docs`), so the one that matters can sit below the cut.
+  const more = rest > 0 ? ` (and ${rest} more — see \`codegraph status\`)` : '';
+  return `Not indexed (no grammar): ${parts.join(', ')}${more}. Map them to a supported language in codegraph.json if they are source.`;
 }
 
 /**
